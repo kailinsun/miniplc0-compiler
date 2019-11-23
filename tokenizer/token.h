@@ -9,22 +9,22 @@
 namespace miniplc0 {
 
 	enum TokenType {
-        NULL_TOKEN, // 仅仅为了内部实现方便，不应该出现在分析过程
-        UNSIGNED_INTEGER, // 无符号整数
-        IDENTIFIER, // 标识符
-        BEGIN, // 关键字 BEGIN
-        END, // 关键字 END
-        VAR, // 关键字 VAR
-        CONST, // 关键字 CONST
-        PRINT, // 关键字 PRINT
-        PLUS_SIGN, // 符号 +
-        MINUS_SIGN, // 符号 -
-        MULTIPLICATION_SIGN, // 符号 *
-        DIVISION_SIGN, // 符号 /
-        EQUAL_SIGN, // 符号 =
-        SEMICOLON, // 符号 ;
-        LEFT_BRACKET, // 符号 (
-        RIGHT_BRACKET // 符号 )
+        NULL_TOKEN,
+        UNSIGNED_INTEGER,
+        IDENTIFIER,
+        BEGIN,
+        END,
+        VAR,
+        CONST,
+        PRINT,
+        PLUS_SIGN,
+        MINUS_SIGN,
+        MULTIPLICATION_SIGN,
+        DIVISION_SIGN,
+        EQUAL_SIGN,
+        SEMICOLON,
+        LEFT_BRACKET,
+        RIGHT_BRACKET
 	};
 
 	class Token final {
