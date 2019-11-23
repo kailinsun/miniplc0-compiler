@@ -38,10 +38,19 @@ namespace miniplc0 {
 		// 完全可以参照 <程序> 编写
 
 		// <常量声明>
+		auto cd=analyseConstantDeclaration();
+		if(cd.has_value())
+		    return cd;
 
 		// <变量声明>
+		auto vd=analyseVariableDeclaration();
+		if(vd.has_value())
+            return vd;
 
 		// <语句序列>
+		auto ss=analyseStatementSequence();
+		if(ss.has_value())
+            return ss;
 		return {};
 	}
 
@@ -75,6 +84,7 @@ namespace miniplc0 {
 			if (!next.has_value() || next.value().GetType() != TokenType::EQUAL_SIGN)
 				return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrConstantNeedValue);
 
+
 			// <常表达式>
 			int32_t val;
 			auto err = analyseConstantExpression(val);
@@ -86,7 +96,7 @@ namespace miniplc0 {
 			if (!next.has_value() || next.value().GetType() != TokenType::SEMICOLON)
 				return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrNoSemicolon);
 			// 生成一次 LIT 指令加载常量
-			_instructions.emplace_back(Operation::LIT, val);
+            _instructions.emplace_back(Operation::LIT, val);
 		}
 		return {};
 	}
@@ -95,21 +105,51 @@ namespace miniplc0 {
 	// <变量声明语句> ::= 'var'<标识符>['='<表达式>]';'
 	// 需要补全
 	std::optional<CompilationError> Analyser::analyseVariableDeclaration() {
-		// 变量声明语句可能有一个或者多个
+        // 变量声明语句可能有一个或者多个
+		while (true){
+            // 预读？
+            auto next = nextToken();
+            if (!next.has_value())
+                return {};
+            // 'var'
+            if (next.value().GetType() != TokenType::VAR) {
+                unreadToken();
+                return {};
+            }
+            // <标识符>
+            next = nextToken();
+            if (!next.has_value() || next.value().GetType() != TokenType::IDENTIFIER)
+                return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrNeedIdentifier);
+            if (isDeclared(next.value().GetValueString()))
+                return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrDuplicateDeclaration);
+            // 变量可能没有初始化，仍然需要一次预读
+            auto pre_next = next;
+            next = nextToken();
+            if(!next.has_value()||(next.value().GetType()!=TokenType::EQUAL_SIGN && next.value().GetType()!=TokenType::SEMICOLON)){
+                return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrInvalidVariableDeclaration);
+            }
+            if(next.value().GetType()==TokenType::SEMICOLON){
+                addUninitializedVariable(pre_next.value());
+                _instructions.emplace_back(Operation::LIT, 0);
+                continue;
+            }
 
-		// 预读？
+            addVariable(pre_next.value());
 
-		// 'var'
+            // '='
+            /*next = nextToken();*/
+            if (!next.has_value() || next.value().GetType() != TokenType::EQUAL_SIGN)
+                return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrInvalidVariableDeclaration);
+            // '<表达式>'
+            auto err = analyseExpression();
+            if (err.has_value())
+                return err;
+            // ';'
+            next = nextToken();
+            if (!next.has_value() || next.value().GetType() != TokenType::SEMICOLON)
+                return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrNoSemicolon);
 
-		// <标识符>
-
-		// 变量可能没有初始化，仍然需要一次预读
-
-		// '='
-
-		// '<表达式>'
-
-		// ';'
+		}
 		return {};
 	}
 
@@ -135,6 +175,22 @@ namespace miniplc0 {
 			switch (next.value().GetType()) {
 				// 这里需要你针对不同的预读结果来调用不同的子程序
 				// 注意我们没有针对空语句单独声明一个函数，因此可以直接在这里返回
+                case IDENTIFIER:{
+                    auto err=analyseAssignmentStatement();
+                    if(err.has_value())
+                        return err;
+                    break;
+                }
+                case PRINT:{
+                    auto err=analyseOutputStatement();
+                    if(err.has_value())
+                        return err;
+                    break;
+                }
+                case SEMICOLON:{
+                    next=nextToken();
+                    break;
+                }
 			default:
 				break;
 			}
@@ -150,6 +206,29 @@ namespace miniplc0 {
 		// 注意以下均为常表达式
 		// +1 -1 1
 		// 同时要注意是否溢出
+
+		/*          1234            */
+		auto next=nextToken();
+        auto prefix = 1;
+        if (!next.has_value())
+            return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrIncompleteExpression);
+        if (next.value().GetType() == TokenType::PLUS_SIGN)
+            prefix = 1;
+        else if (next.value().GetType() == TokenType::MINUS_SIGN) {
+            prefix = -1;
+        }
+        else{
+            prefix=1;
+            unreadToken();
+        }
+        next=nextToken();
+        if(next.value().GetType()!=UNSIGNED_INTEGER){
+            return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrIncompleteExpression);
+        }
+        std::string string_token=next.value().GetValueString();
+        int32_t x=atoi(string_token.c_str());
+        out=x*prefix;
+
 		return {};
 	}
 
@@ -193,6 +272,37 @@ namespace miniplc0 {
 		// 标识符声明过吗？
 		// 标识符是常量吗？
 		// 需要生成指令吗？
+
+        // 如果之前 <语句序列> 的实现正确，这里第一个 next 一定是 TokenType::IDENTIFIR
+		auto next=nextToken();
+		std::string string_token=next.value().GetValueString();
+        // 标识符声明过吗？
+        // 标识符是常量吗？
+        if(!isDeclared(string_token)){
+            return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrNotDeclared);
+        }
+        if(isConstant(string_token)){
+            return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrAssignToConstant);
+        }
+
+		//'='
+		next=nextToken();
+		if(!next.has_value()||next.value().GetType()!=TokenType::EQUAL_SIGN){
+            return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrInvalidAssignment);
+		}
+
+		//表达式
+		auto err=analyseExpression();
+        if (err.has_value())
+            return err;
+
+        int32_t index = getIndex(string_token);
+        if(isUninitializedVariable(string_token)){
+            _uninitialized_vars.erase(string_token);
+            _vars.insert(std::pair<std::string,int32_t >(string_token,index));
+        }
+        _instructions.emplace_back(STO,index);
+
 		return {};
 	}
 
@@ -230,7 +340,43 @@ namespace miniplc0 {
 	// 需要补全
 	std::optional<CompilationError> Analyser::analyseItem() {
 		// 可以参考 <表达式> 实现
-		return {};
+
+        // <项>
+        auto err = analyseFactor();
+        if (err.has_value())
+            return err;
+
+        // {<乘法型运算符><因子>}
+        while (true) {
+            // 预读
+            auto next = nextToken();
+            if (!next.has_value())
+                return {};
+            auto type = next.value().GetType();
+//            std::cout<<"pre:"<<next.value().GetValueString()<<std::endl;
+            if (type != TokenType::MULTIPLICATION_SIGN && type != TokenType::DIVISION_SIGN) {
+                unreadToken();
+                return {};
+            }
+//            std::cout<<"tail:"<<next.value().GetValueString()<<std::endl;
+
+            // <因子>
+            err = analyseFactor();
+            if (err.has_value())
+                return err;
+
+
+            // 根据结果生成指令
+            if (type == TokenType::MULTIPLICATION_SIGN){
+                _instructions.emplace_back(Operation::MUL, 0);
+            }
+
+            else if (type == TokenType::DIVISION_SIGN){
+                _instructions.emplace_back(Operation::DIV, 0);
+            }
+
+        }
+        return {};
 	}
 
 	// <因子> ::= [<符号>]( <标识符> | <无符号整数> | '('<表达式>')' )
@@ -257,13 +403,43 @@ namespace miniplc0 {
 		switch (next.value().GetType()) {
 			// 这里和 <语句序列> 类似，需要根据预读结果调用不同的子程序
 			// 但是要注意 default 返回的是一个编译错误
-		default:
-			return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrIncompleteExpression);
-		}
+            case IDENTIFIER:{
+                if(!isDeclared(next.value().GetValueString())){
+                    return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrNotDeclared);
+                }
+                if(isUninitializedVariable(next.value().GetValueString())){
+                    return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrNotInitialized);
+                }
+                int32_t index=getIndex(next.value().GetValueString());
+                _instructions.emplace_back(LOD,index);
+                break;
+            }
+            case UNSIGNED_INTEGER:{
+                int32_t x=atoi(next.value().GetValueString().c_str());
+                _instructions.emplace_back(LIT,x*prefix);
+                break;
+            }
+            case LEFT_BRACKET:{
+                auto err=analyseExpression();
+                if(err.has_value()){
+                    return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrIncompleteExpression);
+                }
+                next=nextToken();
+                if(!next.has_value()||next.value().GetType()!=TokenType::RIGHT_BRACKET){
+                    return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrIncompleteExpression);
+                }
+                break;
+            }
+            default:
+                return std::make_optional<CompilationError>(_current_pos, ErrorCode::ErrIncompleteExpression);
+            }
 
 		// 取负
-		if (prefix == -1)
-			_instructions.emplace_back(Operation::SUB, 0);
+		if (prefix == -1){
+            _instructions.emplace_back(Operation::SUB, 0);
+//            printf("here???\n");
+		}
+
 		return {};
 	}
 
@@ -326,3 +502,38 @@ namespace miniplc0 {
 		return _consts.find(s) != _consts.end();
 	}
 }
+/*
+ * <字母> ::=
+     'a'|'b'|'c'|'d'|'e'|'f'|'g'|'h'|'i'|'j'|'k'|'l'|'m'|'n'|'o'|'p'|'q'|'r'|'s'|'t'|'u'|'v'|'w'|'x'|'y'|'z'
+    |'A'|'B'|'C'|'D'|'E'|'F'|'G'|'H'|'I'|'J'|'K'|'L'|'M'|'N'|'O'|'P'|'Q'|'R'|'S'|'T'|'U'|'V'|'W'|'X'|'Y'|'Z'
+<数字> ::= '0'|'1'|'2'|'3'|'4'|'5'|'6'|'7'|'8'|'9'
+<符号> ::= '+'|'-'
+
+<无符号整数> ::= <数字>{<数字>}
+<标识符> ::= <字母>{<字母>|<数字>}
+
+<关键字> ::= 'begin' | 'end' | 'const' | 'var' | 'print'
+
+<程序> ::= 'begin'<主过程>'end'
+<主过程> ::= <常量声明><变量声明><语句序列>
+
+<常量声明> ::= {<常量声明语句>}
+<常量声明语句> ::= 'const'<标识符>'='<常表达式>';'
+<常表达式> ::= [<符号>]<无符号整数>
+
+<变量声明> ::= {<变量声明语句>}
+<变量声明语句> ::= 'var'<标识符>['='<表达式>]';'
+
+<语句序列> ::= {<语句>}
+<语句> ::= <赋值语句>|<输出语句>|<空语句>
+<赋值语句> ::= <标识符>'='<表达式>';'
+<输出语句> ::= 'print' '(' <表达式> ')' ';'
+<空语句> ::= ';'
+
+<表达式> ::= <项>{<加法型运算符><项>}
+<项> ::= <因子>{<乘法型运算符><因子>}
+<因子> ::= [<符号>]( <标识符> | <无符号整数> | '('<表达式>')' )
+
+<加法型运算符> ::= '+'|'-'
+<乘法型运算符> ::= '*'|'/'
+ * */
